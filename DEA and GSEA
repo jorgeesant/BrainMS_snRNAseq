@@ -1,0 +1,602 @@
+---
+title: "04-DEA"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-01-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DESeq2)
+```
+
+```{r}
+ms_data.new <- readRDS("/home/projects/exam_2026_22102/group4/data/ms_filtered_new_celltype.rds")
+```
+
+```{r}
+# Aggregate counts to sample level
+counts <- AggregateExpression(ms_data.new, 
+                              group.by = c("cell_type_manual", "input_id"),
+                              assays =  "RNA",
+                              return.seurat = FALSE)
+counts <- counts$RNA
+
+# transpose
+counts.t <- t(counts)
+
+# convert to data.frame
+counts.t <- as.data.frame(counts.t)
+
+# get values where to split
+splitRows <- gsub('_.*', '', rownames(counts.t))
+
+# split data.frame
+cts.split <- split.data.frame(counts.t,
+                              f = factor(splitRows))
+# fix colnames and transpose
+cts.split.modified <- lapply(cts.split, function(x){
+    rownames(x) <- gsub('.*_(.*)', '\\1', rownames(x)) #whatever comes after the underscore in the row names will be retained in the final result.
+    t(x)
+})
+```
+
+Astrocytes:
+
+```{r}
+counts_astro <- cts.split.modified$`Astrocytes`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_astro)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_astro), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_astro,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_astro <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_astro)
+print(res_astro)
+```
+
+```{r}
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Turn the DESeq2 results object into a tibble for use with tidyverse functions
+res_tbl_astro <- res_astro %>%
+  data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  as_tibble()
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl_astro, padj < padj_cutoff)
+
+# Order results by padj values
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(padj) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+
+```{r}
+# Or, order results by log fold change
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(log2FoldChange) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+
+Excitatory neurons:
+
+```{r}
+counts_en <- cts.split.modified$`EN`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_en)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_en), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_en,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_EN <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_EN)
+print(res_EN)
+```
+
+```{r}
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Turn the DESeq2 results object into a tibble for use with tidyverse functions
+res_tbl_EN <- res_EN %>%
+  data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  as_tibble()
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl_EN, padj < padj_cutoff)
+
+# Order results by padj values
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(padj) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+Endothelial
+
+```{r}
+counts_endo <- cts.split.modified$`Endothelial`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_endo)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_endo), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_endo,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_endo <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_endo)
+print(res_endo)
+```
+
+IN
+
+```{r}
+counts_IN <- cts.split.modified$`IN`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_IN)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_IN), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_IN,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_IN <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_IN)
+print(res_IN)
+```
+
+```{r}
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Turn the DESeq2 results object into a tibble for use with tidyverse functions
+res_tbl_IN <- res_IN %>%
+  data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  as_tibble()
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl_IN, padj < padj_cutoff)
+
+# Order results by padj values
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(padj) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+
+Microglia
+
+```{r}
+counts_micro <- cts.split.modified$`Microglia`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_micro)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_micro), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_micro,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_micro <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_micro)
+print(res_micro)
+```
+
+OL-Progenitor
+
+```{r}
+counts_OLP <- cts.split.modified$`OL-Progenitor`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_OLP)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_OLP), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_OLP,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_OLP <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_OLP)
+print(res_OLP)
+```
+
+```{r}
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Turn the DESeq2 results object into a tibble for use with tidyverse functions
+res_tbl_OLP <- res_OLP %>%
+  data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  as_tibble()
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl_OLP, padj < padj_cutoff)
+
+# Order results by padj values
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(padj) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+
+
+Oligodendrocytes
+
+```{r}
+counts_OL <- cts.split.modified$`Oligodendrocytes`
+```
+
+```{r}
+sample_meta <- ms_data.new@meta.data %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "cell") %>%
+  dplyr::select(input_id, condition, sex) %>%
+  distinct()
+
+colData <- sample_meta %>%
+  dplyr::filter(input_id %in% colnames(counts_OL)) %>%
+  tibble::column_to_rownames("input_id")
+
+# align to counts (VERY important, and you did this right)
+colData <- colData[colnames(counts_OL), , drop = FALSE]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_OL,
+  colData   = colData,
+  design    = ~ sex + condition
+)
+```
+
+```{r}
+keep <- rowSums(counts(dds)) >=10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+# Check the coefficients for the comparison
+resultsNames(dds)
+# Generate results object
+res_OL <- results(dds, name = "condition_MS_vs_Control")
+
+summary(res_OL)
+print(res_OL)
+```
+
+```{r}
+# Set thresholds
+padj_cutoff <- 0.05
+
+# Turn the DESeq2 results object into a tibble for use with tidyverse functions
+res_tbl_OL <- res_OL %>%
+  data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  as_tibble()
+
+# Subset the significant results
+sig_res <- dplyr::filter(res_tbl_OL, padj < padj_cutoff)
+
+# Order results by padj values
+top20_sig_genes <- sig_res %>%
+  dplyr::arrange(padj) %>%
+  dplyr::pull(gene) %>%
+  head(n=20)
+print(top20_sig_genes)
+```
+
+
+# GSEA
+
+EN
+
+```{r}
+res_tbl_gsea_EN <- res_EN %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  filter(!is.na(pvalue), !is.na(log2FoldChange))
+
+res_tbl_gsea_EN$stat_sig <- -log10(res_tbl_gsea_EN$pvalue + 1e-300) * sign(res_tbl_gsea_EN$log2FoldChange)
+
+rankData <- res_tbl_gsea_EN$stat_sig
+names(rankData) <- res_tbl_gsea_EN$gene
+rankData <- sort(rankData, decreasing = TRUE)
+
+# gene sets
+library(msigdbr)
+hallmark <- msigdbr(species="Homo sapiens", category="H")
+gsList <- split(hallmark$gene_symbol, hallmark$gs_name)
+
+fgseaResTidy_EN <- fgsea(pathways = gsList, stats = rankData) %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+head(fgseaResTidy_EN)
+```
+```{r}
+# Plotting top/bottom 10
+
+library(ggplot2)
+
+top_10 <- fgseaResTidy_EN %>% arrange(desc(NES)) %>% head(10)
+bottom_10 <- fgseaResTidy_EN %>% arrange(NES) %>% head(10)
+top_bottom_10 <- rbind(top_10, bottom_10)
+
+g <- ggplot(top_bottom_10, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(
+    x = "Pathway", y = "NES",
+    title = paste("Top/Bottom 10 pathways in EN")
+  ) +
+  theme_minimal()
+
+print(g)
+```
+
+
+OL
+
+```{r}
+res_tbl_gsea_OL <- res_OL %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  filter(!is.na(pvalue), !is.na(log2FoldChange))
+
+res_tbl_gsea_OL$stat_sig <- -log10(res_tbl_gsea_OL$pvalue + 1e-300) * sign(res_tbl_gsea_OL$log2FoldChange)
+
+rankData <- res_tbl_gsea_OL$stat_sig
+names(rankData) <- res_tbl_gsea_OL$gene
+rankData <- sort(rankData, decreasing = TRUE)
+
+# gene sets
+library(msigdbr)
+hallmark <- msigdbr(species="Homo sapiens", category="H")
+gsList <- split(hallmark$gene_symbol, hallmark$gs_name)
+
+fgseaResTidy_OL <- fgsea(pathways = gsList, stats = rankData) %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+head(fgseaResTidy_OL)
+```
+
+```{r}
+# Plotting top/bottom 10
+
+library(ggplot2)
+
+top_10 <- fgseaResTidy_OL %>% arrange(desc(NES)) %>% head(10)
+bottom_10 <- fgseaResTidy_OL %>% arrange(NES) %>% head(10)
+top_bottom_10 <- rbind(top_10, bottom_10)
+
+g <- ggplot(top_bottom_10, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(
+    x = "Pathway", y = "NES",
+    title = paste("Top/Bottom 10 pathways in OL")
+  ) +
+  theme_minimal()
+
+print(g)
+```
+
+
+IN
+
+```{r}
+res_tbl_gsea_IN <- res_IN %>%
+  as.data.frame() %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  filter(!is.na(pvalue), !is.na(log2FoldChange))
+
+res_tbl_gsea_IN$stat_sig <- -log10(res_tbl_gsea_IN$pvalue + 1e-300) * sign(res_tbl_gsea_IN$log2FoldChange)
+
+rankData <- res_tbl_gsea_IN$stat_sig
+names(rankData) <- res_tbl_gsea_IN$gene
+rankData <- sort(rankData, decreasing = TRUE)
+
+# gene sets
+library(msigdbr)
+hallmark <- msigdbr(species="Homo sapiens", category="H")
+gsList <- split(hallmark$gene_symbol, hallmark$gs_name)
+
+fgseaResTidy_IN <- fgsea(pathways = gsList, stats = rankData) %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+head(fgseaResTidy_IN)
+```
+```{r}
+# Plotting top/bottom 10
+
+library(ggplot2)
+
+top_10 <- fgseaResTidy_IN %>% arrange(desc(NES)) %>% head(10)
+bottom_10 <- fgseaResTidy_IN %>% arrange(NES) %>% head(10)
+top_bottom_10 <- rbind(top_10, bottom_10)
+
+g <- ggplot(top_bottom_10, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  coord_flip() +
+  labs(
+    x = "Pathway", y = "NES",
+    title = paste("Top/Bottom 10 pathways in IN")
+  ) +
+  theme_minimal()
+
+print(g)
+```
+
