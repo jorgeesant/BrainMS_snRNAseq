@@ -1,0 +1,890 @@
+---
+title: "04_Trajectory_Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(slingshot)
+  library(SingleCellExperiment)
+  library(tradeSeq)
+  library(dplyr)
+  library(ggplot2)
+})
+
+```
+
+```{r}
+ms_data <- readRDS("/home/projects/exam_2026_22102/group4/data/ms_filtered_new_celltype.rds")
+```
+
+Subset to OL lineage only
+
+```{r}
+ms_ol <- subset(ms_data, subset = cell_type_manual %in% c("OL-Progenitor","Oligodendrocytes"))
+table(ms_ol$cell_type_manual)
+
+```
+
+CLEAN the subset
+
+```{r}
+# remove any scaled layers if present
+if ("scale.data" %in% names(ms_ol@assays$RNA@layers)) {
+  ms_ol@assays$RNA@layers$scale.data <- NULL
+}
+
+# remove reductions/graphs/neighbors
+ms_ol@reductions <- list()
+ms_ol@graphs <- list()
+ms_ol@neighbors <- list()
+
+# sanity checks: should be empty
+Reductions(ms_ol)
+names(ms_ol@graphs)
+
+```
+
+Re-run standard Seurat workflow on the subset
+
+```{r}
+ms_ol <- FindVariableFeatures(ms_ol, nfeatures = 2000)
+ms_ol <- ScaleData(ms_ol)
+ms_ol <- RunPCA(ms_ol)
+
+ElbowPlot(ms_ol)
+
+```
+
+Neighbors + clustering (Louvain = algorithm 1) at **resolution 0.2**:
+
+```{r}
+npc <- 10
+ms_ol <- FindNeighbors(ms_ol, dims = 1:npc)
+ms_ol <- FindClusters(ms_ol, resolution = 0.2, algorithm = 1)  # Louvain
+ms_ol <- RunUMAP(ms_ol, dims = 1:npc)
+```
+
+```{r}
+DimPlot(ms_ol, group.by = "seurat_clusters", label = TRUE) + NoLegend()
+table(Idents(ms_ol))
+
+```
+
+Annotate clusters
+
+First, confirm maturation markers by cluster
+
+```{r}
+VlnPlot(ms_ol, features = c("PDGFRA","CSPG4","VCAN"), pt.size = 0)          # OPC
+VlnPlot(ms_ol, features = c("TCF7L2","BCAS1","ENPP6","MYRF"), pt.size = 0)  # commitment
+VlnPlot(ms_ol, features = c("MBP","PLP1","MOG","MAG","MOBP"), pt.size = 0)  # mature
+
+```
+
+Add “state scores”
+
+```{r}
+mol56 <- intersect(c("PTGDS","IL33","OPALIN"), rownames(ms_ol))
+mol2  <- intersect(c("HOPX","PLIN3","KLK6","S100B"), rownames(ms_ol))
+mol1  <- intersect(c("EGR1","BTG2","KLF4","ARC"), rownames(ms_ol))
+
+stress <- intersect(c("HSPA1A","HSPA1B","DNAJB1","HSPB1","HSPH1","STIP1"), rownames(ms_ol))
+mhc1   <- intersect(c("HLA-B","HLA-C","B2M"), rownames(ms_ol))
+ifn    <- intersect(c("IFIT1","IFIT2","IFIT3","OAS1","OAS2","OAS3","ISG15"), rownames(ms_ol))
+
+ms_ol <- AddModuleScore(ms_ol, features = list(mol56), name = "MOL56_score")
+ms_ol <- AddModuleScore(ms_ol, features = list(mol2),  name = "MOL2_score")
+ms_ol <- AddModuleScore(ms_ol, features = list(mol1),  name = "MOL1_score")
+
+ms_ol <- AddModuleScore(ms_ol, features = list(stress), name = "Stress_score")
+ms_ol <- AddModuleScore(ms_ol, features = list(mhc1),   name = "MHC1_score")
+ms_ol <- AddModuleScore(ms_ol, features = list(ifn),    name = "IFN_score")
+
+```
+
+```{r}
+FeaturePlot(ms_ol, features = c("MOL56_score1","MOL2_score1","MOL1_score1"), reduction = "umap")
+FeaturePlot(ms_ol, features = c("Stress_score1","MHC1_score1","IFN_score1"), reduction = "umap")
+
+```
+
+```{r}
+VlnPlot(ms_ol, features = c("MOL56_score1","MOL2_score1","MOL1_score1",
+                            "Stress_score1","MHC1_score1","IFN_score1"),
+        pt.size = 0, ncol = 3)
+
+```
+
+Get top markers per cluster (unbiased)
+
+```{r}
+markers <- FindAllMarkers(ms_ol, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+top10 <- markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10)
+
+top10
+
+```
+
+-   0 - Mature OL
+
+    -   MBP / PLP1 / MOBP violins
+
+    -   Lack of PDGFRA / CSPG4
+
+    -   Lack of stress / MHC scores
+
+    -   PLXDC2 + PALM2 markers
+
+-   1 - OPC
+
+    -   Cluster 1 is enriched for oligodendrocyte progenitor markers including PDGFRA and VCAN, lacks myelin gene expression, and therefore represents the OPC population forming the root of the oligodendrocyte lineage.
+
+-   2 - Stress responsive ol
+
+    -   s enriched for heat-shock and chaperone genes, indicating a stress-responsive oligodendrocyte state consistent with disease-associated oligodendrocytes described in MS
+
+-   3 - Immune reacting ol
+
+    -   enriched for MHC class I genes (HLA-B, HLA-C, B2M), indicating an immune-interacting oligodendrocyte state consistent with disease-associated oligodendrocytes described in MS
+
+-   4 -
+
+Check for cl4
+
+```{r}
+Idents(ms_ol) <- "seurat_clusters"  # make sure "4" refers to the same system
+
+ol_genes  <- c("MBP","PLP1","MOG","MAG","MOBP")
+neu_genes <- c("SLC17A7","SYN1","SYP","NRGN","ATP1A3")
+
+ol_genes  <- intersect(ol_genes, rownames(ms_ol))
+neu_genes <- intersect(neu_genes, rownames(ms_ol))
+
+cells4 <- WhichCells(ms_ol, idents = "4")
+
+expr <- GetAssayData(ms_ol, slot = "data")
+
+# average expression in cluster 4
+avg_ol4  <- rowMeans(expr[ol_genes,  cells4, drop=FALSE])
+avg_neu4 <- rowMeans(expr[neu_genes, cells4, drop=FALSE])
+
+avg_ol4
+avg_neu4
+
+# % of cells in cluster 4 with expression > 0
+pct_ol4  <- rowMeans(expr[ol_genes,  cells4, drop=FALSE] > 0)
+pct_neu4 <- rowMeans(expr[neu_genes, cells4, drop=FALSE] > 0)
+
+pct_ol4
+pct_neu4
+
+```
+
+cl 4 is a mix of neurons and ol so we will remove it and redo the prev steps
+
+```{r}
+Idents(ms_ol) <- "seurat_clusters"
+ms_ol_clean <- subset(ms_ol, idents = setdiff(levels(Idents(ms_ol)), "4"))
+
+```
+
+```{r}
+table(Idents(ms_ol_clean))
+
+```
+
+Re-run neighbors / clustering / UMAP on the cleaned object
+
+```{r}
+# wipe objects that depend on geometry
+ms_ol_clean@graphs <- list()
+ms_ol_clean@neighbors <- list()
+ms_ol_clean@reductions$umap <- NULL
+
+npc <- 10
+ms_ol_clean <- FindNeighbors(ms_ol_clean, dims = 1:npc)
+ms_ol_clean <- FindClusters(ms_ol_clean, resolution = 0.2, algorithm = 1)  # Louvain res 0.2
+ms_ol_clean <- RunUMAP(ms_ol_clean, dims = 1:npc)
+
+p1 <- DimPlot(ms_ol_clean, group.by = "seurat_clusters", label = TRUE) + NoLegend()
+p1
+```
+
+```{r}
+ggsave(
+  filename = "UMAP_seurat_clusters.png",
+  plot = p1,
+  width = 6,
+  height = 5,
+  dpi = 300
+)
+```
+
+```{r}
+p_opc <- VlnPlot(ms_ol_clean, features = c("PDGFRA","CSPG4","VCAN"), pt.size = 0)
+p_commit <- VlnPlot(ms_ol_clean, features = c("TCF7L2","BCAS1","ENPP6","MYRF"), pt.size = 0)
+p_mature <- VlnPlot(ms_ol_clean, features = c("MBP","PLP1","MOG","MAG","MOBP"), pt.size = 0)
+
+ggsave("Vln_OPC_markers.png", p_opc, width = 8, height = 4, dpi = 300)
+ggsave("Vln_commitment_markers.png", p_commit, width = 10, height = 4, dpi = 300)
+ggsave("Vln_mature_OL_markers.png", p_mature, width = 12, height = 4, dpi = 300)
+
+```
+
+```{r}
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(mol56), name = "MOL56_score")
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(mol2),  name = "MOL2_score")
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(mol1),  name = "MOL1_score")
+
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(stress), name = "Stress_score")
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(mhc1),   name = "MHC1_score")
+ms_ol_clean <- AddModuleScore(ms_ol_clean, features = list(ifn),    name = "IFN_score")
+
+```
+
+```{r}
+p_mol <- FeaturePlot(
+  ms_ol_clean,
+  features = c("MOL56_score1","MOL2_score1","MOL1_score1"),
+  reduction = "umap"
+)
+
+p_state <- FeaturePlot(
+  ms_ol_clean,
+  features = c("Stress_score1","MHC1_score1","IFN_score1"),
+  reduction = "umap"
+)
+
+ggsave("UMAP_MOL_scores.png", p_mol, width = 10, height = 4, dpi = 300)
+ggsave("UMAP_Stress_MHC_IFN_scores.png", p_state, width = 10, height = 4, dpi = 300)
+
+```
+
+```{r}
+markers_clean <- FindAllMarkers(ms_ol_clean, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+top10_clean <- markers_clean %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10)
+
+top10_clean
+
+```
+
+```{r}
+write.csv(top10_clean, file = "Top10_Marker_Genes_by_Cluster.csv", row.names = FALSE)
+```
+
+-   
+
+-   0 - Mature oligodendrocytes
+
+    -   high expression of myelin-associated genes including OPALIN, PLXDC2, LAMA2, and CA2, consistent with a differentiated myelin-forming OL state.”
+
+-   1 - OPC (oligodendrocyte progenitor cells)
+
+    -   **PDGFRA, VCAN** → canonical OPC markers
+
+    <!-- -->
+
+    -   **MYT1** → early OL lineage commitment
+
+    <!-- -->
+
+    -   No myelin genes (MBP/PLP1) → not mature OL
+
+-   2 - Stress-responsive oligodendrocytes
+
+    -   Dominated by **heat-shock/chaperone genes** (*HSPA1A/B, HSPB1, HSPH1, DNAJB1, STIP1*)
+
+    -   disease-associated oligodendrocytes.
+
+-   3 - Immune-interacting oligodendrocytes (MHC-I–high, DA1-like)
+
+    -   immune-interacting (MHC-I–enriched) disease-associated oligodendrocytes.
+
+    -   **HLA-B, HLA-C, B2M** → MHC class I antigen presentation
+
+-   4 - Intermediate / newly formed oligodendrocytes (NFOL / pre-myelinating OLs)
+
+    -   **ENPP6** → hallmark of **newly formed / immature oligodendrocytes**
+
+    <!-- -->
+
+    -   **RASGRF1** → human OL lineage maturation marker (hOligo1-like)
+
+    <!-- -->
+
+    -   **ABCA6, ACSBG1** → lipid metabolism supporting myelination
+
+    <!-- -->
+
+    -   Lacks strong MBP/PLP1 → not fully mature
+
+    <!-- -->
+
+    -   Lacks PDGFRA → past OPC stage
+
+-   5 - Early OPC
+
+-   6 - Opc like
+
+    -   CSPG4 is highest here + PDGFRA and VCAN are high
+
+    -   Myelin markers are relatively low
+
+-   7 - Transitional / minor OL state
+
+SLINGSHOT
+
+```{r}
+Idents(ms_ol_clean) <- "seurat_clusters"
+levels(Idents(ms_ol_clean))
+
+```
+
+```{r}
+start_cl <- "1"
+
+```
+
+Prepare embeddings + clustering for Slingshot
+
+```{r}
+library(slingshot)
+
+npc <- 10  # same PCs you used for clustering
+dim_pca  <- as.matrix(Embeddings(ms_ol_clean, "pca")[, 1:npc])
+dim_umap <- as.matrix(Embeddings(ms_ol_clean, "umap"))
+clustering <- Idents(ms_ol_clean)
+
+```
+
+Run Slingshot
+
+```{r}
+sds <- slingshot(
+  dim_pca,
+  clusterLabels = clustering,
+  start.clus = start_cl
+)
+sds
+
+```
+
+Plot lineages on PCA (first 2 PCs)
+
+```{r}
+png("Slingshot_PCA.png", width = 1600, height = 1200, res = 300)
+
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+dim2_pca <- dim_pca[,1:2]
+
+plot(dim2_pca,
+     col = pal[as.numeric(factor(clustering))],
+     pch = 16, cex = 0.6,
+     xlab = "PC_1", ylab = "PC_2",
+     main = paste("Slingshot on PCA (root =", start_cl, ")"))
+
+lines(SlingshotDataSet(sds), lwd = 2, col = "black", type = "lineages")
+
+dev.off()
+
+```
+
+```{r}
+png("Slingshot_UMAP.png", width = 1600, height = 1200, res = 300)
+
+sds_umap <- embedCurves(sds, dim_umap)
+
+plot(dim_umap,
+     col = pal[as.numeric(factor(clustering))],
+     pch = 16, cex = 0.6,
+     xlab = "UMAP_1", ylab = "UMAP_2",
+     main = paste("Slingshot on UMAP (root =", start_cl, ")"))
+
+lines(SlingshotDataSet(sds_umap), lwd = 2, col = "black", type = "lineages")
+
+dev.off()
+
+
+
+```
+
+Pseudotime: add to Seurat object and visualize
+
+choose main
+
+```{r}
+pt <- slingPseudotime(sds)
+w  <- slingCurveWeights(sds)
+
+# choose main lineage (most cells with decent weight)
+main_lin <- colnames(w)[which.max(colSums(w > 0.5, na.rm = TRUE))]
+main_lin
+
+```
+
+```{r}
+ms_ol_clean$pseudotime <- pt[, main_lin]
+
+```
+
+```{r}
+FeaturePlot(ms_ol_clean, features = "pseudotime", reduction = "umap")
+
+```
+
+Check which clusters are in that lineage
+
+```{r}
+slingLineages(sds)
+
+```
+
+```{r}
+pt_all <- slingPseudotime(sds)     # cells x lineages matrix
+colnames(pt_all)
+
+# store each lineage pseudotime as a separate meta.data column
+for (j in seq_len(ncol(pt_all))) {
+  nm <- paste0("pseudotime_L", j)
+  ms_ol_clean[[nm]] <- pt_all[, j]
+}
+
+# optional: also store Slingshot curve weights (how strongly each cell belongs to each lineage)
+w_all <- slingCurveWeights(sds)
+for (j in seq_len(ncol(w_all))) {
+  nm <- paste0("weight_L", j)
+  ms_ol_clean[[nm]] <- w_all[, j]
+}
+
+```
+
+```{r}
+p_L2 <- FeaturePlot(
+  ms_ol_clean,
+  features = "pseudotime_L2",
+  reduction = "umap"
+)
+
+p_L3 <- FeaturePlot(
+  ms_ol_clean,
+  features = "pseudotime_L3",
+  reduction = "umap"
+)
+
+ggsave("UMAP_pseudotime_L2.png", p_L2, width = 6, height = 5, dpi = 300)
+ggsave("UMAP_pseudotime_L3.png", p_L3, width = 6, height = 5, dpi = 300)
+
+```
+
+Define your cluster → subtype mapping
+
+```{r}
+png("Slingshot_UMAP_Lineage2_3_centers.png", width = 1600, height = 1200, res = 300)
+
+plot(dim_umap, col = pal[as.numeric(factor(clustering))], 
+     pch = 16, cex = 0.5,
+     xlab = "UMAP_1", ylab = "UMAP_2", 
+     main = "Slingshot Lineages 2 & 3 (Cluster Centers)")
+
+lines(SlingshotDataSet(sds_umap), 
+      linInd = c(2, 3),
+      lwd = 2,
+      type = "lineages",
+      col = c("black", "black"))
+
+for (i in levels(clustering)) {
+  center <- colMeans(dim_umap[clustering == i, , drop = FALSE])
+  text(center[1], center[2], labels = i, font = 2, cex = 1.2)
+}
+
+dev.off()
+
+```
+
+```{r}
+png(
+  filename = "slingshot_lineages1_2_3.png",
+  width = 2200,
+  height = 2000,
+  res = 300
+)
+
+# 1. Define your labels
+cluster_labels <- c(
+  "0" = "0: Mature OL",
+  "1" = "1: OPC",
+  "2" = "2: Stress-responsive OL",
+  "3" = "3: Immune-interacting OL",
+  "4" = "4: NFOL / pre-myelinating",
+  "5" = "5: Early OPC",
+  "6" = "6: OPC-like",
+  "7" = "7: Transitional OL state"
+)
+
+# 2. Re-create the plot
+# Adjusting xpd=TRUE allows the legend to potentially sit outside the plot area
+par(mar = c(5, 4, 4, 10), xpd = TRUE) 
+
+plot(dim_umap, col = pal[as.numeric(factor(clustering))], 
+     pch = 16, cex = 0.5,
+     xlab = "UMAP_1", ylab = "UMAP_2", 
+     main = "Slingshot Lineages 1 & 2 & 3")
+
+# 3. Add the lineages and dots
+lines(SlingshotDataSet(sds_umap), 
+      linInd = c(1, 2, 3), 
+      lwd = 2, 
+      type = 'lineages', 
+      col = "black")
+
+# 4. Add the Legend
+# 'inset' moves it to the right, 'bty' removes the box, 'pch' adds the dots
+legend("topright", 
+       inset = c(-0.45, 0), 
+       legend = cluster_labels, 
+       fill = pal[1:length(cluster_labels)], 
+       title = "Cell Types",
+       cex = 0.8,
+       bty = "n")
+
+# 5. Optional: Add the cluster numbers to the plot centers (as in your example)
+for (i in levels(clustering)) {
+  center <- colMeans(dim_umap[clustering == i, , drop = FALSE])
+  text(center[1], center[2], labels = i, font = 2, cex = 1.1)
+}
+dev.off()
+```
+
+"MS vs. Control" Compositional Analysis
+
+```{r}
+p_comp <- ggplot(comp_data, aes(x = condition, y = proportion, fill = cell_type)) +
+  geom_bar(stat = "identity", position = "fill") +
+  theme_minimal() +
+  scale_fill_manual(values = pal) +
+  labs(
+    y = "Proportion of Cells",
+    x = "Condition",
+    fill = "Cluster Subtype",
+    title = "Cluster Composition: MS vs. Control"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("Cluster_Composition_MS_vs_Control.png",
+       plot = p_comp,
+       width = 6,
+       height = 5,
+       dpi = 300)
+```
+
+### **Test: `earlyDETest` (Lineage 1 vs. 2 vs. 3)**
+
+This identifies genes that diverge at the very first branch point. This is the "why" behind the different trajectories.
+
+```{r}
+# 1. Define filt_counts (filtering to speed up GAM fitting)
+# We use genes expressed in at least 1% of cells
+counts_matrix <- as.matrix(GetAssayData(ms_ol_clean, slot = "counts"))
+filt_counts <- counts_matrix[rowSums(counts_matrix > 0) > (ncol(ms_ol_clean) * 0.01), ]
+
+# 2. Extract Slingshot data for all 3 lineages
+pseudotime <- slingPseudotime(sds, na = FALSE)
+cellWeights <- slingCurveWeights(sds)
+
+# 3. Fit the GAM (this is the core for all tradeSeq tests)
+library(tradeSeq)
+sce <- fitGAM(counts = filt_counts, 
+              pseudotime = pseudotime, 
+              cellWeights = cellWeights,
+              nknots = 6)
+```
+
+```{r}
+# Use 'sds' instead of 'curves' if that is your Slingshot object name
+plotGeneCount(sds, filt_counts, clusters = clustering, models = sce)
+```
+
+```{r}
+# This version should run without errors
+earlyDERes <- earlyDETest(sce, knots = c(5, 6))
+
+# Rank the genes by significance
+oEarly <- order(earlyDERes$waldStat, decreasing = TRUE)
+top_early_genes <- head(rownames(earlyDERes)[oEarly], 10)
+print(top_early_genes)
+```
+
+```{r}
+# Convert filt_counts to a standard matrix explicitly
+plotSmoothers(sce, counts = as.matrix(filt_counts), gene = "SMAD3")
+```
+
+```{r}
+# Convert filt_counts to a standard matrix explicitly
+plotSmoothers(sce, counts = as.matrix(filt_counts), gene = "TRIB2")
+```
+
+```{r}
+# 1. Run the global pattern test (this will work because it uses no extra arguments)
+patternRes_global <- patternTest(sce)
+
+# 2. Sort by the Wald Statistic
+# High values mean the gene's expression 'shape' varies significantly across the 6 lines
+oGlobal <- order(patternRes_global$waldStat, decreasing = TRUE)
+top_global_genes <- head(rownames(patternRes_global)[oGlobal], 20)
+
+print(top_global_genes)
+```
+
+```{r}
+# Use the matrix conversion fix to avoid the S4 error
+# We will check the first 3 genes to see which ones distinguish Lineages 1, 2, and 3
+plotSmoothers(sce, counts = as.matrix(filt_counts), gene = top_global_genes[1])
+plotSmoothers(sce, counts = as.matrix(filt_counts), gene = top_global_genes[2])
+plotSmoothers(sce, counts = as.matrix(filt_counts), gene = top_global_genes[3])
+```
+
+refiting
+
+```{r}
+# Identify your target lineages based on your paths:
+# Lineage A: 1-0-3 (Immune)
+# Lineage B: 1-0-2 (Stress)
+# Lineage C: 1-0-4 (Mature)
+
+# Extract only these 3 columns from the weights and pseudotime
+# Note: Check which column index matches your lineage paths in the sds object
+# Usually, they follow the order they were created.
+cellWeights_ms <- as.matrix(slingCurveWeights(sds))[, c(1, 2, 3)] 
+pseudotime_ms  <- as.matrix(slingPseudotime(sds, na = FALSE))[, c(1, 2, 3)]
+
+# Verify the dimensions: Should be [Number of Cells] x 3
+print(dim(cellWeights_ms))
+```
+
+```{r}
+slingLineages(sds)
+```
+
+```{r}
+# List all metadata columns to find your cluster labels
+colnames(ms_ol_clean@meta.data)
+```
+
+```{r}
+# Assuming your target lineages are 1, 2, and 3 
+# (Double-check slingLineages(sds) to be sure!)
+target_idx <- c(1, 2, 3) 
+
+# Extract Weights using the slot access or as.data.frame trick
+weights_raw <- as.matrix(as.data.frame(slingCurveWeights(sds)))
+final_weights <- weights_raw[, target_idx]
+
+# Extract Pseudotime similarly
+pt_raw <- as.matrix(as.data.frame(slingPseudotime(sds, na = FALSE)))
+final_pt <- pt_raw[, target_idx]
+
+# Check dimensions: Should be [Number of Cells] x 3
+print(dim(final_weights))
+```
+
+```{r}
+# 1. Identify which cells have at least some weight in Lineages 1, 2, or 3
+# rowSums will be > 0 for cells belonging to your MS paths
+keep_cells <- rowSums(final_weights) > 0
+
+# 2. Subset the Weights and Pseudotime matrices
+final_weights_filtered <- final_weights[keep_cells, ]
+final_pt_filtered      <- final_pt[keep_cells, ]
+
+# 3. Subset your Counts matrix to match these specific cells
+# This is crucial! The number of columns in filt_counts must match the rows in weights
+counts_filtered <- as.matrix(filt_counts)[, keep_cells]
+
+# Verify the dimensions match
+print(ncol(counts_filtered))       # Number of cells
+print(nrow(final_weights_filtered)) # Must be the same number!
+```
+
+```{r}
+# This should now start successfully
+sce_final <- fitGAM(counts = counts_filtered, 
+                    pseudotime = final_pt_filtered, 
+                    cellWeights = final_weights_filtered,
+                    nknots = 6, 
+                    verbose = TRUE)
+```
+
+```{r}
+saveRDS(sce_final, file = "sce_final_tradeSeq_123.rds")
+
+```
+
+------------------------------------------------------------------------
+
+```{r}
+DimPlot(ms_ol_clean, group.by = "condition")
+```
+
+```{r}
+p <- DimPlot(ms_ol_clean, group.by = "condition")
+
+ggsave(
+  filename = "UMAP_OL_by_condition.png",
+  plot = p,
+  width = 7,
+  height = 6,
+  dpi = 300
+)
+
+```
+
+```{r}
+earlyRes <- earlyDETest(sce_final)
+earlyRes <- earlyRes[order(earlyRes$waldStat, decreasing = TRUE), ]
+top_early <- head(rownames(earlyRes), 10)
+top_early
+
+```
+
+```{r}
+# Recommended representative early genes
+genes_rep <- c("HSPA1A", "HLA-C", "QKI")
+
+# Keep only genes that exist in your fitted object
+genes_rep <- intersect(genes_rep, rownames(counts_filtered))
+genes_rep
+
+for (g in genes_rep) {
+  png(filename = paste0("smoother_", g, ".png"), width = 1800, height = 1200, res = 250)
+  print(plotSmoothers(sce_final, counts = counts_filtered, gene = g))
+  dev.off()
+}
+```
+
+2\) Pseudotime shift by condition *within lineage*
+
+```{r}
+df <- data.frame(
+  pt_L3 = ms_ol_clean$pseudotime_L3,
+  MHC1  = ms_ol_clean$MHC1_score1,
+  IFN   = ms_ol_clean$IFN_score1,
+  condition = ms_ol_clean$condition
+)
+
+w <- ggplot(df, aes(pt_L3, MHC1, color = condition)) + geom_point(size=0.3) + theme_minimal() +
+  labs(title="MHC-I score increases along immune pseudotime", x="Pseudotime (L3)", y="MHC-I module score")
+
+ggsave(
+  filename = "MHC1_vs_pseudotime_L3.png",
+  plot = w,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+```
+
+```{r}
+diffEndRes <- diffEndTest(sce_final)
+head(diffEndRes)
+
+```
+
+```{r}
+diffEndRes <- diffEndRes[order(diffEndRes$waldStat, decreasing = TRUE), ]
+head(diffEndRes, 20)
+
+```
+
+```{r}
+dir.create("figures", showWarnings = FALSE)
+
+genes_to_save <- c("QKI", "PLP1", "NEAT1")
+
+for (g in genes_to_save) {
+  png(
+    filename = file.path("figures", paste0("smoother_", g, ".png")),
+    width = 2200,
+    height = 1600,
+    res = 300
+  )
+  
+  plotSmoothers(
+    sce_final,
+    counts = as.matrix(counts_filtered),
+    gene = g
+  )
+  
+  dev.off()
+}
+
+```
+
+```{r}
+png("QKI_smoother.png", width = 2200, height = 1600, res = 300)
+plotSmoothers(
+  sce_final,
+  counts = as.matrix(counts_filtered),
+  gene = "QKI"
+)
+dev.off()
+
+
+```
+
+```{r}
+png("PLP1_smoother.png", width = 2200, height = 1600, res = 300)
+plotSmoothers(
+  sce_final,
+  counts = as.matrix(counts_filtered),
+  gene = "PLP1"
+)
+dev.off()
+
+```
+
+```{r}
+png("NEAT1_smoother.png", width = 2200, height = 1600, res = 300)
+plotSmoothers(
+  sce_final,
+  counts = as.matrix(counts_filtered),
+  gene = "NEAT1"
+)
+dev.off()
+
+
+```
+
+```{r}
+patternRes <- patternTest(sce_final)
+patternRes <- patternRes[order(patternRes$waldStat, decreasing = TRUE), ]
+head(patternRes, 20)
+
+```
+
+```{r}
+scale_color_manual(
+  name = "Lineage",
+  values = c(
+    "1" = "#440154",  # purple
+    "2" = "#21908C",  # teal
+    "3" = "#FDE725"   # yellow
+  ),
+  labels = c(
+    "1" = "Mature OLs",
+    "2" = "Stress-associated OLs",
+    "3" = "Immune-interacting OLs"
+  )
+)
+
+```
